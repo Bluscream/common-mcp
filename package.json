@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "test": "npx ts-node --esm tests/test_tools.ts && npx ts-node --esm tests/test_folder_diff.ts"
   },
   "keywords": [],
   "author": "",

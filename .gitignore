@@ -1,6 +1,5 @@
 node_modules/
 dist/
 *.log
-test_tools.ts
 hex_test.bin
 .env

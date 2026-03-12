@@ -57,7 +57,7 @@ const toolSchemas: Record<string, any> = {
     },
     diff: {
         name: "diff",
-        description: "Compare two strings or file contents and return a readable diff.",
+        description: "Compare two strings or paths and return a readable diff.",
         inputSchema: {
             type: "object",
             properties: {
