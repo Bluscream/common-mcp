@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "test": "npx ts-node --esm tests/test_tools.ts && npx ts-node --esm tests/test_folder_diff.ts"
+    "test": "npx tsx tests/grep.ts && npx tsx tests/count.ts && npx tsx tests/diff.ts && npx tsx tests/eval.ts && npx tsx tests/hex.ts && npx tsx tests/single_mode.ts"
   },
   "keywords": [],
   "author": "",
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }
