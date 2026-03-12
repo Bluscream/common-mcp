@@ -63,7 +63,7 @@ const toolSchemas: Record<string, any> = {
             properties: {
                 left: { type: "string", description: "Content or file path A" },
                 right: { type: "string", description: "Content or file path B" },
-                type: { type: "string", enum: ["auto", "string", "file"], description: "Force input type" },
+                type: { type: "string", enum: ["auto", "string", "file", "directory"], description: "Force input type" },
                 context: { type: "number", description: "Context lines" },
             },
             required: ["left", "right"],
