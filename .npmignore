@@ -1,0 +1,9 @@
+node_modules/
+tests/
+*.log
+hex_test.bin
+.env
+src/
+tsconfig.json
+.git/
+.gitignore

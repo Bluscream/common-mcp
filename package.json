@@ -1,8 +1,8 @@
 {
   "name": "common-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "test": "npx tsx tests/grep.ts && npx tsx tests/count.ts && npx tsx tests/diff.ts && npx tsx tests/eval.ts && npx tsx tests/hex.ts && npx tsx tests/single_mode.ts"
