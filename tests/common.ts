@@ -3,7 +3,7 @@ import { spawn } from "child_process";
 export async function runCommonMcp(args: string[], request: any) {
     return new Promise((resolve, reject) => {
         const proc = spawn("node", ["dist/index.js", ...args], {
-            cwd: "p:\\MCPs\\common-mcp",
+            cwd: process.cwd(),
         });
 
         let stdout = "";

@@ -9,6 +9,7 @@ import { handleHex } from "./tools/hex.js";
 import { handleCount } from "./tools/count.js";
 import { handleEval } from "./tools/eval.js";
 import { handleDiff } from "./tools/diff.js";
+import { handleRegex } from "./tools/regex.js";
 
 const isSingleMode = process.argv.includes("--single-tool") || process.argv.includes("-s");
 
@@ -101,6 +102,21 @@ const toolSchemas: Record<string, any> = {
             required: ["mode", "path"],
         },
     },
+    regex: {
+        name: "regex",
+        description: "Test and analyze regular expressions against strings with detailed match, group, timing, and failure analysis.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                pattern: { type: "string", description: "Regular expression pattern" },
+                text: { type: "string", description: "Input text string to test against the pattern" },
+                flags: { type: "string", description: "Regex flags (e.g. 'g', 'i', 'm', 's', 'u', 'y')" },
+                mode: { type: "string", enum: ["match", "test", "replace", "split"], description: "Execution mode (default: 'match')" },
+                replace: { type: "string", description: "Replacement string (required for 'replace' mode)" },
+            },
+            required: ["pattern", "text"],
+        },
+    },
 };
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -109,13 +125,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             tools: [
                 {
                     name: "common",
-                    description: "Unified utility tool for counting, evaluation, diffing, grepping, and hex operations.",
+                    description: "Unified utility tool for counting, evaluation, diffing, grepping, hex operations, and regex processing.",
                     inputSchema: {
                         type: "object",
                         properties: {
                             tool: {
                                 type: "string",
-                                enum: ["count", "eval", "diff", "grep", "hex"],
+                                enum: ["count", "eval", "diff", "grep", "hex", "regex"],
                                 description: "The specific sub-tool to invoke",
                             },
                             arguments: {
@@ -154,6 +170,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case "diff": result = await handleDiff(toolArgs as any); break;
             case "grep": result = await handleGrep(toolArgs as any); break;
             case "hex": result = await handleHex(toolArgs as any); break;
+            case "regex": result = await handleRegex(toolArgs as any); break;
             default: throw new Error(`Tool not found: ${toolName}`);
         }
 
