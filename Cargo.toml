@@ -13,14 +13,15 @@ categories = ["command-line-utilities"]
 [dependencies]
 async-trait = "0.1.92"
 clap = { version = "4.6.6", features = ["derive", "env"] }
-eval-mcp = { git = "https://github.com/Bluscream/eval-mcp", branch = "rust", version = "0.1.0" }
-fs-mcp = { git = "https://github.com/Bluscream/fs-mcp", branch = "main", version = "0.1.0" }
-hex-mcp = { git = "https://github.com/Bluscream/hex-mcp", branch = "main", version = "0.1.0" }
+hex = "0.4.3"
+ignore = "0.4.33"
 mcp-toolkit = { git = "https://github.com/Bluscream/mcp-toolkit", branch = "main", version = "0.2.0" }
+memchr = "2.8.3"
 regex = "1.13.1"
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 similar = "3.2.0"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs"] }
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "process", "io-util", "time"] }
 
 [profile.release]
 opt-level = 3

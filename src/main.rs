@@ -6,6 +6,10 @@
 //! implementation of each and no subprocess per group.
 
 mod args;
+mod eval;
+mod fs;
+mod hex;
+mod policy;
 mod text;
 
 use std::path::PathBuf;
@@ -47,20 +51,22 @@ struct Cli {
 }
 
 fn build(cli: &Cli) -> Composite {
-    let fs_policy =
-        fs_mcp::policy::Policy::new(cli.allow_write, cli.roots.clone(), cli.max_file_bytes);
-    let hex_policy =
-        hex_mcp::policy::Policy::new(cli.allow_write, cli.roots.clone(), cli.max_file_bytes);
-    let eval_policy = eval_mcp::policy::Policy::new(cli.allow_execution, &cli.languages);
+    let policy = policy::Policy::new(
+        cli.allow_write,
+        cli.allow_execution,
+        &cli.roots,
+        &cli.languages,
+        cli.max_file_bytes,
+    );
 
     // No prefixes: the tool names across these groups are already distinct, and
     // keeping them unprefixed means a client configured for the individual
     // servers sees exactly the same names here.
     Composite::new(vec![
-        Member::new(Arc::new(text::TextTools)),
-        Member::new(Arc::new(fs_mcp::tools::FsTools::new(fs_policy))),
-        Member::new(Arc::new(hex_mcp::tools::HexTools::new(hex_policy))),
-        Member::new(Arc::new(eval_mcp::tools::EvalTools::new(eval_policy))),
+        Member::new(Arc::new(text::TextTools::new(policy.clone()))),
+        Member::new(Arc::new(fs::FsTools::new(policy.clone()))),
+        Member::new(Arc::new(hex::HexTools::new(policy.clone()))),
+        Member::new(Arc::new(eval::EvalTools::new(policy))),
     ])
 }
 

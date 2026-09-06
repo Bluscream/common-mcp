@@ -8,9 +8,18 @@ use serde_json::{Value, json};
 use similar::{ChangeTag, TextDiff};
 
 use crate::args;
+use crate::policy::Policy;
 use mcp_toolkit::{ToolDef, ToolFailure, ToolGroup, ToolOutput, ToolResult};
 
-pub struct TextTools;
+pub struct TextTools {
+    policy: Policy,
+}
+
+impl TextTools {
+    pub fn new(policy: Policy) -> Self {
+        Self { policy }
+    }
+}
 
 /// Guards against a pathological pattern turning a tool call into a hang.
 const MAX_REGEX_SIZE: usize = 1 << 20;
@@ -27,16 +36,23 @@ impl ToolGroup for TextTools {
                 "Computes a unified diff between two strings. Returns the changed hunks with \
                  line numbers, not the whole file.",
                 json!({
-                    "type": "object",
-                    "properties": {
-                        "old_text": { "type": "string", "description": "Original text" },
-                        "new_text": { "type": "string", "description": "Modified text" },
-                        "context_lines": {
-                            "type": "integer",
-                            "description": "Unchanged lines to keep around each hunk (default 3)"
-                        }
+                "type": "object",
+                "properties": {
+                    "old_text": { "type": "string", "description": "Original text" },
+                    "new_text": { "type": "string", "description": "Modified text" },
+                    "old_path": {
+                        "type": "string",
+                        "description": "Read the original side from this file instead"
                     },
-                    "required": ["old_text", "new_text"]
+                    "new_path": {
+                        "type": "string",
+                        "description": "Read the modified side from this file instead"
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Unchanged lines to keep around each hunk (default 3)"
+                    }
+                },
                 }),
             ),
             ToolDef::new(
@@ -89,20 +105,36 @@ impl ToolGroup for TextTools {
 
     async fn call(&self, name: &str, args: Value) -> ToolResult<ToolOutput> {
         match name {
-            "diff_text" => diff_text(&args),
+            "diff_text" => diff_text(&args, &self.policy),
             "diff_json" => diff_json(&args),
             "regex_match" => regex_match(&args),
-            "count_stats" => Ok(count_stats(&args)?),
+            "count_stats" => count_stats(&args, &self.policy),
             other => Err(ToolFailure::NotFound(other.to_string())),
         }
     }
 }
 
-fn diff_text(arguments: &Value) -> ToolResult<ToolOutput> {
-    let old = args::string(arguments, "old_text")?;
-    let new = args::string(arguments, "new_text")?;
+fn diff_text(arguments: &Value, policy: &Policy) -> ToolResult<ToolOutput> {
+    let old = side(arguments, "old_text", "old_path", policy)?;
+    let new = side(arguments, "new_text", "new_path", policy)?;
     let context = usize::try_from(args::u64_or(arguments, "context_lines", 3)?).unwrap_or(3);
-    Ok(render_diff(old, new, context))
+    Ok(render_diff(&old, &new, context))
+}
+
+/// One side of a diff: either an inline string or the contents of a file.
+fn side(arguments: &Value, text_key: &str, path_key: &str, policy: &Policy) -> ToolResult<String> {
+    if let Some(text) = args::opt_string(arguments, text_key)? {
+        return Ok(text.to_string());
+    }
+    let Some(raw) = args::opt_string(arguments, path_key)? else {
+        return Err(ToolFailure::InvalidArguments(format!(
+            "supply either {text_key:?} or {path_key:?}"
+        )));
+    };
+    let path = policy.resolve(raw)?;
+    policy.check_size(&path)?;
+    std::fs::read_to_string(&path)
+        .map_err(|e| ToolFailure::Failed(format!("could not read {}: {e}", path.display())))
 }
 
 fn diff_json(arguments: &Value) -> ToolResult<ToolOutput> {
@@ -213,21 +245,102 @@ pub fn compile(pattern: &str) -> ToolResult<Regex> {
         .map_err(|e| ToolFailure::InvalidArguments(format!("invalid regular expression: {e}")))
 }
 
-fn count_stats(arguments: &Value) -> ToolResult<ToolOutput> {
-    let text = args::string(arguments, "text")?;
+fn count_stats(arguments: &Value, policy: &Policy) -> ToolResult<ToolOutput> {
+    if let Some(text) = args::opt_string(arguments, "text")? {
+        return Ok(ToolOutput::structured(measure(text)));
+    }
+
+    let Some(raw) = args::opt_string(arguments, "path")? else {
+        return Err(ToolFailure::InvalidArguments("supply either \"text\" or \"path\"".into()));
+    };
+    let path = policy.resolve(raw)?;
+    let recursive = args::bool_or(arguments, "recursive", true)?;
+
+    if path.is_file() {
+        policy.check_size(&path)?;
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| ToolFailure::Failed(format!("could not read {}: {e}", path.display())))?;
+        let mut stats = measure(&content);
+        stats["files"] = json!(1);
+        return Ok(ToolOutput::structured(stats));
+    }
+
+    let (lines, words, chars, bytes, files, directories, skipped) =
+        walk_counts(&path, recursive, policy);
     Ok(ToolOutput::structured(json!({
+        "path": path.display().to_string(),
+        "recursive": recursive,
+        "files": files,
+        "directories": directories,
+        "items": files + directories,
+        "lines": lines,
+        "words": words,
+        "chars": chars,
+        "bytes": bytes,
+        "unreadable_or_binary_files_skipped": skipped
+    })))
+}
+
+fn measure(text: &str) -> Value {
+    json!({
         "lines": text.lines().count(),
         "words": text.split_whitespace().count(),
         "chars": text.chars().count(),
         "bytes": text.len()
-    })))
+    })
+}
+
+/// Totals across a directory. Binary and unreadable files are skipped and
+/// reported rather than counted as garbage.
+fn walk_counts(
+    root: &std::path::Path,
+    recursive: bool,
+    policy: &Policy,
+) -> (u64, u64, u64, u64, u64, u64, u64) {
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .max_depth(if recursive { None } else { Some(1) })
+        .standard_filters(true)
+        .follow_links(false)
+        .max_filesize(Some(policy.max_file_bytes()));
+
+    let (mut lines, mut words, mut chars, mut bytes) = (0, 0, 0, 0);
+    let (mut files, mut directories, mut skipped) = (0, 0, 0);
+
+    for entry in builder.build().filter_map(Result::ok) {
+        if entry.path() == root {
+            continue;
+        }
+        match entry.file_type() {
+            Some(t) if t.is_dir() => directories += 1,
+            Some(t) if t.is_file() => {
+                files += 1;
+                // A NUL byte in the first 8 KiB is the standard binary
+                // heuristic; counting "words" in a binary is meaningless.
+                let text = std::fs::read(entry.path())
+                    .ok()
+                    .filter(|raw| memchr::memchr(0, &raw[..raw.len().min(8192)]).is_none());
+                match text.and_then(|raw| String::from_utf8(raw).ok()) {
+                    Some(text) => {
+                        lines += text.lines().count() as u64;
+                        words += text.split_whitespace().count() as u64;
+                        chars += text.chars().count() as u64;
+                        bytes += text.len() as u64;
+                    }
+                    None => skipped += 1,
+                }
+            }
+            _ => {}
+        }
+    }
+    (lines, words, chars, bytes, files, directories, skipped)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     async fn call(name: &str, arguments: Value) -> ToolResult<String> {
-        let result = TextTools.call(name, arguments).await?;
+        let result = TextTools::new(Policy::default()).call(name, arguments).await?;
         Ok(result.text)
     }
 
@@ -330,6 +443,145 @@ mod tests {
         assert_eq!(parsed["words"], 4);
         assert_eq!(parsed["chars"], 23);
         assert_eq!(parsed["bytes"], 25);
+    }
+
+    /// The TypeScript common-mcp could count and diff *paths*, not just
+    /// strings. These cover the behaviour restored here.
+    fn sandbox() -> (tempfile::TempDir, Policy) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let policy = Policy::new(false, false, std::slice::from_ref(&root), &[], 64 * 1024 * 1024);
+        (dir, policy)
+    }
+
+    async fn call_with(policy: &Policy, name: &str, arguments: Value) -> ToolResult<Value> {
+        let result = TextTools::new(policy.clone()).call(name, arguments).await?;
+        Ok(result.structured.unwrap_or_else(|| json!(result.text)))
+    }
+
+    #[tokio::test]
+    async fn count_stats_measures_a_file() {
+        let (dir, policy) = sandbox();
+        let path = dir.path().canonicalize().unwrap().join("a.txt");
+        std::fs::write(&path, "one two\nthree\n").unwrap();
+
+        let out = call_with(&policy, "count_stats", json!({ "path": path.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(out["lines"], 2);
+        assert_eq!(out["words"], 3);
+        assert_eq!(out["files"], 1);
+    }
+
+    #[tokio::test]
+    async fn count_stats_totals_a_directory_and_counts_its_entries() {
+        let (dir, policy) = sandbox();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/b.txt"), "two three\n").unwrap();
+
+        let out = call_with(&policy, "count_stats", json!({ "path": root.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(out["files"], 2);
+        assert_eq!(out["directories"], 1);
+        assert_eq!(out["items"], 3);
+        assert_eq!(out["words"], 3);
+    }
+
+    #[tokio::test]
+    async fn count_stats_can_stay_shallow() {
+        let (dir, policy) = sandbox();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("a.txt"), "x\n").unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/b.txt"), "y\n").unwrap();
+
+        let out = call_with(
+            &policy,
+            "count_stats",
+            json!({ "path": root.to_str().unwrap(), "recursive": false }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out["files"], 1, "only the top level should be counted");
+    }
+
+    #[tokio::test]
+    async fn count_stats_skips_binaries_rather_than_counting_garbage() {
+        let (dir, policy) = sandbox();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("blob.bin"), [0u8, 1, 2, 0]).unwrap();
+
+        let out = call_with(&policy, "count_stats", json!({ "path": root.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(out["unreadable_or_binary_files_skipped"], 1);
+        assert_eq!(out["words"], 0);
+    }
+
+    #[tokio::test]
+    async fn count_stats_still_measures_inline_text() {
+        let (_dir, policy) = sandbox();
+        let out = call_with(&policy, "count_stats", json!({ "text": "a b c" })).await.unwrap();
+        assert_eq!(out["words"], 3);
+    }
+
+    #[tokio::test]
+    async fn count_stats_requires_one_of_text_or_path() {
+        let (_dir, policy) = sandbox();
+        let err = call_with(&policy, "count_stats", json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("path"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn diff_text_can_read_either_side_from_a_file() {
+        let (dir, policy) = sandbox();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("old.txt"), "alpha\nbeta\n").unwrap();
+        std::fs::write(root.join("new.txt"), "alpha\nGAMMA\n").unwrap();
+
+        let out = call_with(
+            &policy,
+            "diff_text",
+            json!({
+                "old_path": root.join("old.txt").to_str().unwrap(),
+                "new_path": root.join("new.txt").to_str().unwrap()
+            }),
+        )
+        .await
+        .unwrap();
+
+        let text = out.as_str().unwrap();
+        assert!(text.contains("-beta"), "{text}");
+        assert!(text.contains("+GAMMA"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn diff_text_can_mix_a_string_and_a_file() {
+        let (dir, policy) = sandbox();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("new.txt"), "changed\n").unwrap();
+
+        let out = call_with(
+            &policy,
+            "diff_text",
+            json!({
+                "old_text": "original\n",
+                "new_path": root.join("new.txt").to_str().unwrap()
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(out.as_str().unwrap().contains("+changed"));
+    }
+
+    #[tokio::test]
+    async fn a_path_outside_the_roots_is_denied_for_text_tools_too() {
+        let (_dir, policy) = sandbox();
+        let err = call_with(&policy, "count_stats", json!({ "path": "/etc" })).await.unwrap_err();
+        assert!(matches!(err, ToolFailure::Denied(_)), "got {err:?}");
     }
 
     #[tokio::test]

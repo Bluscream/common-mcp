@@ -270,10 +270,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
- "eval-mcp",
- "fs-mcp",
- "hex-mcp",
+ "hex",
+ "ignore",
  "mcp-toolkit",
+ "memchr",
  "regex",
  "serde_json",
  "similar",
@@ -378,19 +378,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eval-mcp"
-version = "0.1.0"
-source = "git+https://github.com/Bluscream/eval-mcp?branch=rust#bb4dd8193f5467313dc62b6b5a8c310ef407a797"
-dependencies = [
- "async-trait",
- "clap",
- "mcp-toolkit",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -409,22 +396,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "fs-mcp"
-version = "0.1.0"
-source = "git+https://github.com/Bluscream/fs-mcp?branch=main#2154e038c444c08d23453443fbff97aad011c0a4"
-dependencies = [
- "async-trait",
- "clap",
- "ignore",
- "mcp-toolkit",
- "memchr",
- "regex",
- "serde_json",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -557,20 +528,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "hex-mcp"
-version = "0.1.0"
-source = "git+https://github.com/Bluscream/hex-mcp?branch=main#3d543e632733464a4e22e8dd3eb5a4e9304b6427"
-dependencies = [
- "async-trait",
- "clap",
- "hex",
- "mcp-toolkit",
- "memchr",
- "serde_json",
- "tokio",
-]
 
 [[package]]
 name = "http"

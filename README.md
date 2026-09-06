@@ -19,8 +19,9 @@ common-mcp --transport http --auth-token "$TOK"   # over HTTP
 
 | Tool | From | Does |
 | --- | --- | --- |
-| `diff_text`, `diff_json` | text | Unified and structural diffs. |
-| `regex_match`, `count_stats` | text | Matching with offsets and captures; line/word/char/byte counts. |
+| `diff_text`, `diff_json` | text | Unified and structural diffs. `diff_text` reads either side from a string **or a file**. |
+| `regex_match` | text | Matching with offsets and capture groups. |
+| `count_stats` | text | Lines, words, chars and bytes in a string, **or across a file or directory** — where it also counts files and subdirectories. |
 | `grep_search` | fs | Gitignore-aware search, with byte-exact optional replace. |
 | `hex_view`, `hex_patch` | hex | Hex dump and byte patching with backups. |
 | `eval_code` | eval | Runs scripts in 30+ languages. |
@@ -29,16 +30,28 @@ All accept an optional `timeout` (seconds), clamped to `--max-timeout`.
 
 ## Relationship to the individual servers
 
-Each group is embedded as a library from its own crate
-([hex-mcp](https://github.com/Bluscream/hex-mcp),
-[fs-mcp](https://github.com/Bluscream/fs-mcp),
-[eval-mcp](https://github.com/Bluscream/eval-mcp)), so there is exactly one
-implementation of each tool and no subprocess per group. Tool names are
-identical to the standalone servers', so a client configured against those sees
-the same names here.
+This crate is **self-contained** — it does not depend on
+[hex-mcp](https://github.com/Bluscream/hex-mcp),
+[fs-mcp](https://github.com/Bluscream/fs-mcp) or
+[eval-mcp](https://github.com/Bluscream/eval-mcp), only on the shared
+[mcp-toolkit](https://github.com/Bluscream/mcp-toolkit). Tool names match the
+standalone servers, so a client configured against those sees the same names
+here.
 
-Run the individual servers when you want one capability with its own policy;
-run this when you want the lot behind a single process.
+Run an individual server when you want one capability on its own; run this when
+you want the lot behind a single process.
+
+### What this does that they do not
+
+- **`count_stats` and `diff_text` accept paths**, not just strings — the
+  behaviour the TypeScript `common-mcp` had and the individual Rust servers
+  dropped. Counting a directory reports files, subdirectories and totals, and
+  skips binaries rather than counting garbage in them.
+- **One policy governs every tool.** The individual servers each carried their
+  own copy of the path-resolution and capability logic, and had already begun to
+  drift — only one of them enforced the file size cap. Here the sandbox is
+  defined once, so `count_stats` on a directory is confined by `--root` exactly
+  as `grep_search` is.
 
 ## Safety
 
