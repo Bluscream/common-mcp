@@ -33,8 +33,8 @@ impl ToolGroup for TextTools {
         vec![
             ToolDef::new(
                 "diff_text",
-                "Computes a unified diff between two strings. Returns the changed hunks with \
-                 line numbers, not the whole file.",
+                "Computes a unified diff between two texts, each supplied either inline or as \
+                 a file path. Returns the changed hunks with line numbers, not the whole file.",
                 json!({
                 "type": "object",
                 "properties": {
@@ -91,13 +91,22 @@ impl ToolGroup for TextTools {
             ),
             ToolDef::new(
                 "count_stats",
-                "Counts lines, words, Unicode characters and bytes in a string.",
+                "Counts lines, words, Unicode characters and bytes — either in a string, or \
+                 across a file or directory. For a directory it also counts files and \
+                 subdirectories, skipping binaries. Supply exactly one of `text` or `path`.",
                 json!({
                     "type": "object",
                     "properties": {
-                        "text": { "type": "string", "description": "Text to measure" }
-                    },
-                    "required": ["text"]
+                        "text": { "type": "string", "description": "Text to measure" },
+                        "path": {
+                            "type": "string",
+                            "description": "File or directory to measure instead of `text`"
+                        },
+                        "recursive": {
+                            "type": "boolean",
+                            "description": "Descend into subdirectories (default true)"
+                        }
+                    }
                 }),
             ),
         ]
@@ -457,6 +466,52 @@ mod tests {
     async fn call_with(policy: &Policy, name: &str, arguments: Value) -> ToolResult<Value> {
         let result = TextTools::new(policy.clone()).call(name, arguments).await?;
         Ok(result.structured.unwrap_or_else(|| json!(result.text)))
+    }
+
+    /// The schema is the only thing a model sees. An argument the code accepts
+    /// but the schema omits is unreachable in practice, and a strict client
+    /// validating against the schema will reject it outright — which is exactly
+    /// what happened to `count_stats.path` until this test existed.
+    #[test]
+    fn every_argument_the_code_accepts_is_advertised() {
+        let tools = TextTools::new(Policy::default()).tools();
+        let find = |name: &str| {
+            tools.iter().find(|t| t.name == name).expect("tool must exist").schema.clone()
+        };
+
+        let count = find("count_stats");
+        for arg in ["text", "path", "recursive"] {
+            assert!(
+                count["properties"].get(arg).is_some(),
+                "count_stats accepts {arg:?} but does not advertise it"
+            );
+        }
+        // Neither is required on its own: either form is valid.
+        assert!(
+            count.get("required").is_none(),
+            "marking one of text/path required makes the other form unusable"
+        );
+
+        let diff = find("diff_text");
+        for arg in ["old_text", "new_text", "old_path", "new_path"] {
+            assert!(
+                diff["properties"].get(arg).is_some(),
+                "diff_text accepts {arg:?} but does not advertise it"
+            );
+        }
+        assert!(diff.get("required").is_none(), "either side may be text or a path");
+    }
+
+    #[test]
+    fn descriptions_mention_the_path_form() {
+        let tools = TextTools::new(Policy::default()).tools();
+        for name in ["count_stats", "diff_text"] {
+            let tool = tools.iter().find(|t| t.name == name).unwrap();
+            assert!(
+                tool.description.contains("path") || tool.description.contains("file"),
+                "{name} supports paths but its description never says so"
+            );
+        }
     }
 
     #[tokio::test]
