@@ -26,6 +26,7 @@ use tokio::process::Command;
 
 use crate::args;
 use crate::policy::Policy;
+use mcp_toolkit::spill::{Captured, Sink, SpillDir};
 use mcp_toolkit::{ToolDef, ToolFailure, ToolGroup, ToolOutput, ToolResult};
 
 pub struct EvalTools {
@@ -365,9 +366,12 @@ async fn evaluate(arguments: &Value) -> ToolResult<ToolOutput> {
 
     let mut stdout_pipe = child.stdout.take();
     let mut stderr_pipe = child.stderr.take();
+    let spill = SpillDir::for_server("eval");
+    let mut out_sink = spill.sink("eval-stdout", MAX_OUTPUT_BYTES);
+    let mut err_sink = spill.sink("eval-stderr", MAX_OUTPUT_BYTES);
     let capture = async {
-        let stdout = read_capped(&mut stdout_pipe);
-        let stderr = read_capped(&mut stderr_pipe);
+        let stdout = read_capped(&mut stdout_pipe, &mut out_sink);
+        let stderr = read_capped(&mut stderr_pipe, &mut err_sink);
         let status = child.wait();
         let (status, stdout, stderr) = tokio::join!(status, stdout, stderr);
         (status, stdout, stderr)
@@ -381,10 +385,15 @@ async fn evaluate(arguments: &Value) -> ToolResult<ToolOutput> {
             let mut result = ToolOutput::structured(json!({
                 "language": runtime.names[0],
                 "exit_code": code,
-                "stdout": stdout.text,
-                "stderr": stderr.text,
+                "stdout": stdout.text_with_notice(),
+                "stderr": stderr.text_with_notice(),
                 "stdout_truncated": stdout.truncated,
-                "stderr_truncated": stderr.truncated
+                "stderr_truncated": stderr.truncated,
+                "stdout_bytes": stdout.total_bytes,
+                "stderr_bytes": stderr.total_bytes,
+                // Where the complete stream was saved, when it did not fit.
+                "stdout_file": stdout.spilled.as_ref().map(|s| s.path.display().to_string()),
+                "stderr_file": stderr.spilled.as_ref().map(|s| s.path.display().to_string())
             }));
             // A non-zero exit is a tool failure the model should react to.
             if code != Some(0) {
@@ -399,39 +408,28 @@ async fn evaluate(arguments: &Value) -> ToolResult<ToolOutput> {
     }
 }
 
-struct Captured {
-    text: String,
-    truncated: bool,
-}
-
-/// Reads a pipe to EOF but stops storing beyond the cap, so a script that
-/// prints in a loop cannot exhaust memory or flood the model's context.
-async fn read_capped<R>(pipe: &mut Option<R>) -> Captured
+/// Reads a pipe to EOF, keeping the head in memory and streaming anything past
+/// the cap to a file so nothing is lost.
+///
+/// Discarding the excess would mean the only way to see it is to run the script
+/// again — unacceptable when the script had side effects.
+async fn read_capped<R>(pipe: &mut Option<R>, sink: &mut Sink) -> Captured
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     let Some(pipe) = pipe.as_mut() else {
-        return Captured { text: String::new(), truncated: false };
+        return std::mem::replace(sink, SpillDir::for_server("eval").sink("unused", 0)).finish();
     };
 
-    let mut buffer = Vec::new();
     let mut chunk = [0u8; 8192];
-    let mut truncated = false;
-
     while let Ok(read) = pipe.read(&mut chunk).await {
         if read == 0 {
             break;
         }
-        if buffer.len() < MAX_OUTPUT_BYTES {
-            let room = MAX_OUTPUT_BYTES - buffer.len();
-            buffer.extend_from_slice(&chunk[..read.min(room)]);
-            truncated |= read > room;
-        } else {
-            truncated = true;
-        }
+        sink.push(&chunk[..read]);
     }
 
-    Captured { text: String::from_utf8_lossy(&buffer).into_owned(), truncated }
+    std::mem::replace(sink, SpillDir::for_server("eval").sink("unused", 0)).finish()
 }
 
 #[cfg(test)]
@@ -503,17 +501,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enormous_output_is_truncated_rather_than_buffered_without_bound() {
+    async fn enormous_output_is_preserved_on_disk_rather_than_discarded() {
+        // Throwing the excess away would mean the only way to see it is to run
+        // the script again — unacceptable when the script had side effects.
         let out = run(json!({
             "language": "sh",
             "code": "yes abcdefghijklmnop | head -c 2000000",
-            "timeout_seconds": 30
+            "timeout_seconds": 60
         }))
         .await
         .unwrap();
 
         assert_eq!(out["stdout_truncated"], json!(true));
-        assert!(out["stdout"].as_str().unwrap().len() <= MAX_OUTPUT_BYTES);
+        assert_eq!(out["stdout_bytes"], 2_000_000);
+
+        // Memory stayed bounded: only the head plus a short notice is inline.
+        let inline = out["stdout"].as_str().unwrap();
+        assert!(inline.len() < MAX_OUTPUT_BYTES + 512, "inline output grew past the cap");
+
+        // ...but the whole stream is recoverable.
+        let path = out["stdout_file"].as_str().expect("the rest must be saved somewhere");
+        let saved = std::fs::metadata(path).unwrap().len();
+        assert_eq!(saved, 2_000_000, "the file must hold the complete stream");
+
+        // And the caller is told to read it rather than re-run.
+        assert!(inline.contains(path), "the notice must name the file");
+        assert!(inline.contains("rather than running this again"), "{inline}");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn output_that_fits_is_returned_whole_with_no_file() {
+        let out = run(json!({ "language": "sh", "code": "echo small" })).await.unwrap();
+        assert_eq!(out["stdout"], "small\n");
+        assert_eq!(out["stdout_truncated"], json!(false));
+        assert!(out["stdout_file"].is_null(), "small output must not touch the disk");
     }
 
     #[tokio::test]

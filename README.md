@@ -62,6 +62,13 @@ Off by default, matching the individual servers:
   code is a distinctly larger capability than editing a file.
 - `--root` confines the filesystem tools; `--language` restricts eval.
 - `--max-file-bytes` caps what is opened.
+
+Oversized output is **preserved, not discarded**. `eval_code` returns the first
+256 KiB inline and streams the rest to a file, reporting `stdout_file` and
+`stderr_file` alongside the true byte counts. Discarding it would leave
+re-running the script as the only way to see the rest, which is unacceptable
+when the script had side effects. Captures are written `0600` and old ones are
+pruned.
 - HTTP requires a bearer token unless `--allow-unauthenticated`.
 
 ## Development

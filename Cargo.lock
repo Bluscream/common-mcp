@@ -731,8 +731,8 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp-toolkit"
-version = "0.2.0"
-source = "git+https://github.com/Bluscream/mcp-toolkit?branch=main#fcde4e1f411fffa935f1750d1a1cc21e4d8aef79"
+version = "0.3.0"
+source = "git+https://github.com/Bluscream/mcp-toolkit?branch=main#f48ed59199217f7376a981aaba3e6301fa7d075d"
 dependencies = [
  "async-trait",
  "axum",
