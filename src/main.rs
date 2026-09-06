@@ -5,12 +5,6 @@
 //! group is embedded as a library from its own crate, so there is exactly one
 //! implementation of each and no subprocess per group.
 
-mod eval;
-mod fs;
-mod hex;
-mod policy;
-mod text;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -50,7 +44,7 @@ struct Cli {
 }
 
 fn build(cli: &Cli) -> Composite {
-    let policy = policy::Policy::new(
+    let policy = common_mcp::policy::Policy::new(
         cli.allow_write,
         cli.allow_execution,
         &cli.roots,
@@ -62,10 +56,10 @@ fn build(cli: &Cli) -> Composite {
     // keeping them unprefixed means a client configured for the individual
     // servers sees exactly the same names here.
     Composite::new(vec![
-        Member::new(Arc::new(text::TextTools::new(policy.clone()))),
-        Member::new(Arc::new(fs::FsTools::new(policy.clone()))),
-        Member::new(Arc::new(hex::HexTools::new(policy.clone()))),
-        Member::new(Arc::new(eval::EvalTools::new(policy))),
+        Member::new(Arc::new(common_mcp::text::TextTools::new(policy.clone()))),
+        Member::new(Arc::new(common_mcp::fs::FsTools::new(policy.clone()))),
+        Member::new(Arc::new(common_mcp::hex::HexTools::new(policy.clone()))),
+        Member::new(Arc::new(common_mcp::eval::EvalTools::new(policy))),
     ])
 }
 
