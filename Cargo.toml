@@ -1,0 +1,44 @@
+[package]
+name = "common-mcp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Every omni-mcp tool in one server: text, files, hex, eval"
+license = "Unlicense"
+repository = "https://github.com/Bluscream/common-mcp"
+readme = "README.md"
+keywords = ["mcp", "tools", "aggregate", "toolkit"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+async-trait = "0.1.92"
+clap = { version = "4.6.6", features = ["derive", "env"] }
+eval-mcp = { git = "https://github.com/Bluscream/eval-mcp", branch = "rust", version = "0.1.0" }
+fs-mcp = { git = "https://github.com/Bluscream/fs-mcp", branch = "main", version = "0.1.0" }
+hex-mcp = { git = "https://github.com/Bluscream/hex-mcp", branch = "main", version = "0.1.0" }
+mcp-toolkit = { git = "https://github.com/Bluscream/mcp-toolkit", branch = "main", version = "0.2.0" }
+regex = "1.13.1"
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+similar = "3.2.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+too_many_lines = "deny"
+
+[dev-dependencies]
+tempfile = "3.27.0"
