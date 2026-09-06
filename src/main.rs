@@ -5,7 +5,6 @@
 //! group is embedded as a library from its own crate, so there is exactly one
 //! implementation of each and no subprocess per group.
 
-mod args;
 mod eval;
 mod fs;
 mod hex;

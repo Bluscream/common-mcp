@@ -7,8 +7,8 @@ use regex::Regex;
 use serde_json::{Value, json};
 use similar::{ChangeTag, TextDiff};
 
-use crate::args;
 use crate::policy::Policy;
+use mcp_toolkit::args;
 use mcp_toolkit::{ToolDef, ToolFailure, ToolGroup, ToolOutput, ToolResult};
 
 pub struct TextTools {
@@ -148,9 +148,9 @@ fn diff_json(arguments: &Value) -> ToolResult<ToolOutput> {
 /// that pass file contents verbatim get a structural diff rather than a
 /// character-by-character one.
 fn canonical_json(arguments: &Value, field: &str) -> ToolResult<String> {
-    let value = arguments.get(field).ok_or_else(|| crate::args::missing(field))?;
+    let value = arguments.get(field).ok_or_else(|| args::missing(field))?;
     let parsed = match value {
-        Value::String(text) => serde_json::from_str::<Value>(text).map_err(|e| {
+        Value::String(text) => serde_json::from_str::<Value>(text.as_str()).map_err(|e| {
             ToolFailure::InvalidArguments(format!("{field:?} is a string but not valid JSON: {e}"))
         })?,
         other => other.clone(),

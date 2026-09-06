@@ -5,29 +5,21 @@
 //! for them to drift — and they had already begun to: only one of them checked
 //! the file size cap. Here there is one.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-use mcp_toolkit::{ToolFailure, ToolResult};
+use mcp_toolkit::{Sandbox, ToolFailure, ToolResult};
 
-#[derive(Debug, Clone)]
+/// Capability switches plus the shared filesystem sandbox.
+///
+/// The path handling lives in mcp-toolkit so every server in the family agrees
+/// on it — including the cross-platform rules that three separate copies had
+/// each got wrong.
+#[derive(Debug, Clone, Default)]
 pub struct Policy {
     allow_write: bool,
     allow_execution: bool,
-    roots: Vec<PathBuf>,
     allowed_languages: Vec<String>,
-    max_file_bytes: u64,
-}
-
-impl Default for Policy {
-    fn default() -> Self {
-        Self {
-            allow_write: false,
-            allow_execution: false,
-            roots: Vec::new(),
-            allowed_languages: Vec::new(),
-            max_file_bytes: 64 * 1024 * 1024,
-        }
-    }
+    sandbox: Sandbox,
 }
 
 impl Policy {
@@ -38,20 +30,26 @@ impl Policy {
         allowed_languages: &[String],
         max_file_bytes: u64,
     ) -> Self {
-        // Canonicalise once so a symlinked root still matches paths resolved
-        // through it.
-        let roots = roots.iter().map(|r| r.canonicalize().unwrap_or_else(|_| r.clone())).collect();
         Self {
             allow_write,
             allow_execution,
-            roots,
             allowed_languages: allowed_languages.iter().map(|l| l.to_lowercase()).collect(),
-            max_file_bytes,
+            sandbox: Sandbox::new(roots, max_file_bytes),
         }
     }
 
     pub fn max_file_bytes(&self) -> u64 {
-        self.max_file_bytes
+        self.sandbox.max_file_bytes()
+    }
+
+    /// Resolves a caller-supplied path within the permitted roots.
+    pub fn resolve(&self, raw: &str) -> ToolResult<PathBuf> {
+        self.sandbox.resolve(raw)
+    }
+
+    /// Refuses a file larger than the configured ceiling.
+    pub fn check_size(&self, path: &Path) -> ToolResult<u64> {
+        self.sandbox.check_size(path)
     }
 
     /// Fails unless file modification was enabled.
@@ -90,61 +88,6 @@ impl Policy {
             self.allowed_languages.join(", ")
         )))
     }
-
-    /// Resolves a caller-supplied path, rejecting anything outside the roots.
-    pub fn resolve(&self, raw: &str) -> ToolResult<PathBuf> {
-        if raw.trim().is_empty() {
-            return Err(ToolFailure::InvalidArguments("path must not be empty".into()));
-        }
-        let requested = Path::new(raw);
-        if requested.is_relative() {
-            return Err(ToolFailure::InvalidArguments(format!(
-                "path {raw:?} must be absolute; the server has no meaningful working directory"
-            )));
-        }
-
-        // Canonicalise when the path exists so symlinks cannot escape a root;
-        // otherwise normalise lexically so creating a new file still works.
-        let resolved = requested.canonicalize().unwrap_or_else(|_| normalize(requested));
-
-        if self.roots.is_empty() || self.roots.iter().any(|root| resolved.starts_with(root)) {
-            return Ok(resolved);
-        }
-        Err(ToolFailure::Denied(format!("path {raw:?} is outside the configured --root set")))
-    }
-
-    /// Refuses a file larger than the cap.
-    ///
-    /// Several tools read a whole file into memory to rewrite it, so without
-    /// this a large target exhausts RAM.
-    pub fn check_size(&self, path: &Path) -> ToolResult<u64> {
-        let length = std::fs::metadata(path)
-            .map_err(|e| ToolFailure::Failed(format!("could not stat {}: {e}", path.display())))?
-            .len();
-        if length > self.max_file_bytes {
-            return Err(ToolFailure::Denied(format!(
-                "{} is {length} bytes, over the {} byte limit; raise --max-file-bytes to proceed",
-                path.display(),
-                self.max_file_bytes
-            )));
-        }
-        Ok(length)
-    }
-}
-
-/// Collapses `.` and `..` without touching the filesystem.
-fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -191,29 +134,6 @@ mod tests {
     }
 
     #[test]
-    fn without_roots_any_absolute_path_resolves() {
-        assert!(permissive(&[]).resolve("/etc/hostname").is_ok());
-    }
-
-    #[test]
-    fn relative_and_empty_paths_are_rejected() {
-        let policy = permissive(&[]);
-        assert!(policy.resolve("relative/file").is_err());
-        assert!(policy.resolve("   ").is_err());
-    }
-
-    #[test]
-    fn paths_are_confined_to_the_roots() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        std::fs::write(root.join("f"), b"x").unwrap();
-
-        let policy = permissive(std::slice::from_ref(&root));
-        assert!(policy.resolve(root.join("f").to_str().unwrap()).is_ok());
-        assert!(matches!(policy.resolve("/etc/passwd"), Err(ToolFailure::Denied(_))));
-    }
-
-    #[test]
     fn dot_dot_cannot_escape_a_root() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -221,18 +141,6 @@ mod tests {
 
         let escape = format!("{}/../../../../etc/passwd", root.display());
         assert!(matches!(policy.resolve(&escape), Err(ToolFailure::Denied(_))));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_symlink_pointing_outside_a_root_is_denied() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        let link = root.join("escape");
-        std::os::unix::fs::symlink("/etc/passwd", &link).unwrap();
-
-        let policy = permissive(std::slice::from_ref(&root));
-        assert!(matches!(policy.resolve(link.to_str().unwrap()), Err(ToolFailure::Denied(_))));
     }
 
     #[test]
@@ -246,10 +154,5 @@ mod tests {
         let tight = Policy::new(true, true, std::slice::from_ref(&root), &[], 1024);
         assert!(matches!(tight.check_size(&path), Err(ToolFailure::Denied(_))));
         assert_eq!(permissive(std::slice::from_ref(&root)).check_size(&path).unwrap(), 4096);
-    }
-
-    #[test]
-    fn normalisation_collapses_dot_segments() {
-        assert_eq!(normalize(Path::new("/a/b/../c/./d")), PathBuf::from("/a/c/d"));
     }
 }

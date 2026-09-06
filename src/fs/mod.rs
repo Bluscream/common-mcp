@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use ignore::WalkBuilder;
 use serde_json::{Value, json};
 
-use crate::args;
 use crate::policy::Policy;
+use mcp_toolkit::args;
 use mcp_toolkit::{ToolDef, ToolFailure, ToolGroup, ToolOutput, ToolResult};
 
 pub struct FsTools {
@@ -222,7 +222,7 @@ impl SearchRequest {
                 continue;
             };
             // A NUL byte in the first 8 KiB is the standard binary heuristic.
-            if memchr::memchr(0, &content[..content.len().min(8192)]).is_some() {
+            if mcp_toolkit::looks_binary(&content) {
                 skipped += 1;
                 continue;
             }
@@ -337,29 +337,10 @@ impl SearchRequest {
     }
 }
 
-/// Writes via a temporary file in the same directory then renames, so a crash
-/// mid-write cannot leave a half-rewritten source file behind.
+/// Delegates to the shared atomic write, mapping its error into ours.
 fn write_atomically(path: &Path, content: &str) -> ToolResult<()> {
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    let failed =
-        |e: std::io::Error| ToolFailure::Failed(format!("writing {}: {e}", path.display()));
-
-    let mut temp = tempfile::NamedTempFile::new_in(directory).map_err(failed)?;
-    std::io::Write::write_all(&mut temp, content.as_bytes()).map_err(failed)?;
-
-    // Preserve the original mode; `NamedTempFile` creates files as 0600.
-    #[cfg(unix)]
-    if let Ok(metadata) = std::fs::metadata(path) {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = temp
-            .as_file()
-            .set_permissions(std::fs::Permissions::from_mode(metadata.permissions().mode()));
-    }
-
-    temp.persist(path).map_err(|e| {
-        ToolFailure::Failed(format!("could not replace {}: {}", path.display(), e.error))
-    })?;
-    Ok(())
+    mcp_toolkit::write_atomically(path, content.as_bytes())
+        .map_err(|e| ToolFailure::Failed(format!("writing {}: {e}", path.display())))
 }
 
 #[cfg(test)]

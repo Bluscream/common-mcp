@@ -24,8 +24,8 @@ use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-use crate::args;
 use crate::policy::Policy;
+use mcp_toolkit::args;
 use mcp_toolkit::spill::{Captured, Sink, SpillDir};
 use mcp_toolkit::{ToolDef, ToolFailure, ToolGroup, ToolOutput, ToolResult};
 
@@ -40,7 +40,7 @@ impl EvalTools {
 }
 
 /// Truncation point for each of stdout and stderr.
-const MAX_OUTPUT_BYTES: usize = 256 * 1024;
+use mcp_toolkit::MAX_OUTPUT_BYTES;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Interpreters this tool knows how to drive.

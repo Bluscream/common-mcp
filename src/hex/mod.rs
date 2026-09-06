@@ -13,8 +13,8 @@ use std::io::{Read, Seek, SeekFrom};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::args;
 use crate::policy::Policy;
+use mcp_toolkit::args;
 use mcp_toolkit::{ToolDef, ToolFailure, ToolGroup, ToolOutput, ToolResult};
 
 pub struct HexTools {
