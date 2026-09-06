@@ -57,8 +57,12 @@ impl Policy {
         if self.allow_write {
             return Ok(());
         }
+        // Names both spellings: this crate runs standalone behind a CLI flag
+        // and embedded in omni-mcp behind a config key, and a message naming
+        // only one of them is wrong half the time.
         Err(ToolFailure::Denied(
-            "this tool modifies files, which is disabled; start the server with --allow-write"
+            "this tool modifies files, which is disabled; enable it with --allow-write, or \
+             `allow_file_mutation = true` under [tools] when embedded in omni-mcp"
                 .into(),
         ))
     }
@@ -72,7 +76,9 @@ impl Policy {
             return Ok(());
         }
         Err(ToolFailure::Denied(
-            "code execution is disabled; start the server with --allow-execution".into(),
+            "code execution is disabled; enable it with --allow-execution, or \
+             `allow_code_execution = true` under [tools] when embedded in omni-mcp"
+                .into(),
         ))
     }
 
